@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prepareRunPayloadsAction } from "@/app/actions/form-actions";
-import { enqueueRunBatch, verifyQstashSignature } from "@/lib/qstash";
+import { enqueueRunBatch, enqueueRunPrepare, verifyQstashSignature } from "@/lib/qstash";
 
 export const POST = async (req: Request) => {
   try {
@@ -30,6 +30,9 @@ export const POST = async (req: Request) => {
       return NextResponse.json(result, { status: 200 });
     }
 
+    if (result.status === "preparing") {
+      await enqueueRunPrepare(payload.runId, 1000);
+    }
     await enqueueRunBatch(payload.runId);
     console.info("qstash-prepare-complete", { runId: payload.runId });
 

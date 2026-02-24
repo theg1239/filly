@@ -19,6 +19,7 @@ import {
 } from "@/app/actions/form-actions";
 import type { FormField, ParsedForm, RunSettings } from "@/lib/types";
 import { samplesSchema, type SamplesOutput } from "@/lib/samples-schema";
+import { useRealtime } from "@/lib/realtime-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -143,54 +144,22 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     [],
   );
 
-  useEffect(() => {
-    if (!runId || runStatus === "completed" || runStatus === "failed") return;
-    const source = new EventSource(`/api/runs/${runId}/stream`);
+  const realtimeEnabled = Boolean(runId) && runStatus !== "completed" && runStatus !== "failed";
 
-    const handler = (event: MessageEvent) => {
-      const payload = JSON.parse(event.data) as {
-        ok: boolean;
-        status?: string;
-        submitted?: number;
-        failed?: number;
-        prepared?: number;
-        error?: string;
-      };
-      if (!payload.ok) {
-        set("/run/status", "failed");
-        set("/ui/error", payload.error ?? "Run failed.");
-        source.close();
-        return;
+  useRealtime({
+    enabled: realtimeEnabled,
+    channels: runId ? [`run-${runId}`] : [],
+    events: ["run.status"],
+    onData: ({ data }) => {
+      if (!runId || data.runId !== runId) return;
+      set("/run/status", data.status);
+      set("/run/submitted", data.submitted);
+      set("/run/failed", data.failed);
+      if (typeof data.prepared === "number") {
+        set("/run/prepared", data.prepared);
       }
-
-      if (payload.status) {
-        set("/run/status", payload.status);
-      }
-      if (typeof payload.submitted === "number") {
-        set("/run/submitted", payload.submitted);
-      }
-      if (typeof payload.failed === "number") {
-        set("/run/failed", payload.failed);
-      }
-      if (typeof payload.prepared === "number") {
-        set("/run/prepared", payload.prepared);
-      }
-      if (payload.status === "completed" || payload.status === "failed") {
-        source.close();
-      }
-    };
-
-    source.addEventListener("status", handler);
-    source.onerror = () => {
-      set("/ui/error", "Live updates disconnected.");
-      source.close();
-    };
-
-    return () => {
-      source.removeEventListener("status", handler);
-      source.close();
-    };
-  }, [runId, runStatus, set]);
+    },
+  });
 
   useEffect(() => {
     set("/ui/loading/preview", previewStreaming);

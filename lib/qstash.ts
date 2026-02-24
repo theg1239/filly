@@ -32,11 +32,13 @@ export const buildQstashUrl = (path: string) => {
   return `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 };
 
-export const enqueueRunPrepare = async (runId: string) => {
+export const enqueueRunPrepare = async (runId: string, delayMs?: number) => {
   const client = getQstashClient();
+  const delaySeconds = delayMs ? Math.max(1, Math.ceil(delayMs / 1000)) : 0;
   await client.publishJSON({
     url: buildQstashUrl("/api/qstash/prepare"),
     body: { runId },
+    ...(delaySeconds ? { delay: delaySeconds } : {}),
   });
 };
 

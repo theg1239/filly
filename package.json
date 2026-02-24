@@ -19,6 +19,8 @@
     "@json-render/react": "^0.9.1",
     "@neondatabase/serverless": "^1.0.2",
     "@upstash/qstash": "^2.9.0",
+    "@upstash/realtime": "^1.0.2",
+    "@upstash/redis": "^1.36.2",
     "ai": "^6.0.97",
     "better-auth": "^1.4.19",
     "class-variance-authority": "^0.7.1",

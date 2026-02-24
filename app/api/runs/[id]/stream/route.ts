@@ -52,6 +52,8 @@ export async function GET(
   const encoder = new TextEncoder();
   let closed = false;
   let interval: ReturnType<typeof setInterval> | null = null;
+  const startedAt = Date.now();
+  const maxStreamMs = 25_000;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -65,11 +67,24 @@ export async function GET(
         }
       };
 
+      // Hint the client to retry quickly if the connection closes.
+      controller.enqueue(encoder.encode("retry: 1500\n\n"));
+
       const tick = async () => {
         if (closed) return;
         try {
           const status = await fetchRunStatus(runId);
           safeEnqueue(status);
+          if (Date.now() - startedAt > maxStreamMs) {
+            closed = true;
+            if (interval) clearInterval(interval);
+            try {
+              controller.close();
+            } catch {
+              // noop
+            }
+            return;
+          }
           if (status.ok && (status.status === "completed" || status.status === "failed")) {
             closed = true;
             if (interval) clearInterval(interval);

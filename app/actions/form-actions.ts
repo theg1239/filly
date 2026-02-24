@@ -14,6 +14,7 @@ import {
 } from "@/lib/google-form";
 import { generateSamples, normalizeSample, streamSampleElements } from "@/lib/ai";
 import { enqueueRunBatch, enqueueRunPrepare } from "@/lib/qstash";
+import { emitRunStatus } from "@/lib/realtime";
 
 const requireDb = () => {
   const db = getDb();
@@ -238,6 +239,14 @@ export const startRunAction = async (
     await db.insert(runItems).values(items);
   }
 
+  await emitRunStatus({
+    runId,
+    status: "preparing",
+    submitted: 0,
+    failed: 0,
+    prepared: 0,
+  });
+
   const run: RunRecord = {
     id: runId,
     formId: form.formId,
@@ -262,6 +271,13 @@ export const startRunAction = async (
       .update(runs)
       .set({ status: "failed", finishedAt: new Date() })
       .where(eq(runs.id, runId));
+    await emitRunStatus({
+      runId,
+      status: "failed",
+      submitted: 0,
+      failed: 1,
+      prepared: 0,
+    });
     return {
       ok: false as const,
       error: error instanceof Error ? error.message : "Failed to enqueue run.",
@@ -300,14 +316,6 @@ export const prepareRunPayloadsAction = async (runId: string) => {
       status: run.status as "completed" | "failed",
       failed: failedItems.length,
     };
-  }
-
-  const existingPayload = await db.query.runItems.findFirst({
-    where: and(eq(runItems.runId, runId), isNotNull(runItems.payload)),
-    columns: { id: true },
-  });
-  if (existingPayload) {
-    return { ok: true as const };
   }
 
   const formRecord = await db.query.forms.findFirst({
@@ -416,6 +424,13 @@ export const prepareRunPayloadsAction = async (runId: string) => {
       .update(runs)
       .set({ status: "failed", finishedAt: new Date() })
       .where(eq(runs.id, runId));
+    await emitRunStatus({
+      runId,
+      status: "failed",
+      submitted: run.submitted,
+      failed: 1,
+      prepared: 0,
+    });
     return {
       ok: false as const,
       error: "Failed to refresh the form before generating samples.",
@@ -449,12 +464,39 @@ export const prepareRunPayloadsAction = async (runId: string) => {
     return { ok: false as const, error: "No run items found." };
   }
 
-  await db
-    .update(runs)
-    .set({ status: "preparing", startedAt: new Date() })
-    .where(eq(runs.id, runId));
+  const preparedItems = items.filter((item) => item.payload != null);
+  const missingItems = items.filter((item) => item.payload == null);
+  const totalCount = items.length;
 
-  const count = items.length;
+  const preparingStatus = run.status === "running" ? "running" : "preparing";
+  if (run.status !== "running" && run.status !== "queued") {
+    await db
+      .update(runs)
+      .set({ status: "preparing", startedAt: new Date() })
+      .where(eq(runs.id, runId));
+  }
+  await emitRunStatus({
+    runId,
+    status: preparingStatus,
+    submitted: run.submitted,
+    failed: 0,
+    prepared: preparedItems.length,
+  });
+
+  if (!missingItems.length) {
+    await db.update(runs).set({ status: "queued" }).where(eq(runs.id, runId));
+    await emitRunStatus({
+      runId,
+      status: "queued",
+      submitted: run.submitted,
+      failed: 0,
+      prepared: totalCount,
+    });
+    return { ok: true as const, status: "queued", prepared: totalCount, remaining: 0 };
+  }
+
+  const batchItems = missingItems.slice(0, 25);
+  const count = batchItems.length;
   const hasApiKey =
     Boolean(process.env.OPENAI_API_KEY) ||
     Boolean(process.env.AI_GATEWAY_API_KEY) ||
@@ -465,14 +507,22 @@ export const prepareRunPayloadsAction = async (runId: string) => {
       .update(runs)
       .set({ status: "failed", finishedAt: new Date() })
       .where(eq(runs.id, runId));
+    await emitRunStatus({
+      runId,
+      status: "failed",
+      submitted: run.submitted,
+      failed: 1,
+      prepared: 0,
+    });
     return { ok: false as const, error: "AI credentials are missing." };
   }
 
   try {
     const { result } = streamSampleElements(fields, count);
-    let prepared = 0;
+    let prepared = preparedItems.length;
+    let filled = 0;
     for await (const sample of result.elementStream) {
-      const item = items[prepared];
+      const item = batchItems[filled];
       if (!item) break;
       const normalized = normalizeSample(sample, fields);
       await db
@@ -480,10 +530,20 @@ export const prepareRunPayloadsAction = async (runId: string) => {
         .set({ payload: normalized, status: "queued" })
         .where(eq(runItems.id, item.id));
       prepared += 1;
+      filled += 1;
+      if (prepared % 5 === 0 || prepared === totalCount) {
+        await emitRunStatus({
+          runId,
+          status: preparingStatus,
+          submitted: run.submitted,
+          failed: 0,
+          prepared,
+        });
+      }
     }
 
-    if (prepared < count) {
-      throw new Error(`AI returned ${prepared} samples for ${count} items.`);
+    if (filled < count) {
+      throw new Error(`AI returned ${filled} samples for ${count} items.`);
     }
   } catch (error) {
     console.error("payload-generation-error", {
@@ -494,14 +554,40 @@ export const prepareRunPayloadsAction = async (runId: string) => {
       .update(runs)
       .set({ status: "failed", finishedAt: new Date() })
       .where(eq(runs.id, runId));
+    await emitRunStatus({
+      runId,
+      status: "failed",
+      submitted: run.submitted,
+      failed: 1,
+      prepared: 0,
+    });
     return {
       ok: false as const,
       error: error instanceof Error ? error.message : "Payload generation failed.",
     };
   }
 
-  await db.update(runs).set({ status: "queued" }).where(eq(runs.id, runId));
-  return { ok: true as const };
+  const remaining = totalCount - (preparedItems.length + count);
+  if (remaining <= 0) {
+    await db.update(runs).set({ status: "queued" }).where(eq(runs.id, runId));
+    await emitRunStatus({
+      runId,
+      status: "queued",
+      submitted: run.submitted,
+      failed: 0,
+      prepared: totalCount,
+    });
+    return { ok: true as const, status: "queued", prepared: totalCount, remaining: 0 };
+  }
+
+  await emitRunStatus({
+    runId,
+    status: preparingStatus,
+    submitted: run.submitted,
+    failed: 0,
+    prepared: totalCount - remaining,
+  });
+  return { ok: true as const, status: "preparing", prepared: totalCount - remaining, remaining };
 };
 
 export const getFormRecordAction = async (formRecordId: string) => {
@@ -643,6 +729,13 @@ export const processRunBatchAction = async (runId: string, batchSize?: number) =
     });
     const prepared = preparedItems.length;
     if (prepared < run.count) {
+      await emitRunStatus({
+        runId,
+        status: "preparing",
+        submitted: run.submitted,
+        failed: 0,
+        prepared,
+      });
       return {
         ok: true as const,
         status: "preparing" as const,
@@ -677,6 +770,13 @@ export const processRunBatchAction = async (runId: string, batchSize?: number) =
       .update(runs)
       .set({ status, finishedAt: new Date(), submitted })
       .where(eq(runs.id, runId));
+    await emitRunStatus({
+      runId,
+      status,
+      submitted,
+      failed,
+      prepared: run.count,
+    });
     return {
       ok: true as const,
       status: status as "completed" | "failed",
@@ -995,6 +1095,12 @@ export const processRunBatchAction = async (runId: string, batchSize?: number) =
     .update(runs)
     .set({ status: "running", submitted })
     .where(eq(runs.id, runId));
+  await emitRunStatus({
+    runId,
+    status: "running",
+    submitted,
+    failed: failedItems.length,
+  });
 
   return {
     ok: true as const,
