@@ -42,24 +42,41 @@ export const emitRunStatus = async (payload: RunStatusPayload) => {
   }
 
   const channel = `run-${payload.runId}`;
-  const id = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-  const event = {
-    id,
-    channel,
-    event: "run.status" as const,
-    data: payload,
-  };
+  const fallbackId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  let eventId = fallbackId;
 
   try {
     try {
-      await redis.xadd(channel, "*", event);
+      const streamId = await redis.xadd(channel, "*", {
+        channel,
+        event: "run.status",
+        data: payload,
+      });
+      if (streamId) {
+        eventId = streamId;
+      }
     } catch (error) {
       console.warn("realtime-xadd-failed", {
         runId: payload.runId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    await redis.publish(channel, event);
+    await redis.publish(channel, {
+      id: eventId,
+      channel,
+      event: "run.status",
+      data: payload,
+    });
+    if (process.env.NODE_ENV !== "production") {
+      console.info("realtime-emit", {
+        runId: payload.runId,
+        status: payload.status,
+        submitted: payload.submitted,
+        failed: payload.failed,
+        prepared: payload.prepared,
+        eventId,
+      });
+    }
   } catch (error) {
     console.error("realtime-emit-failed", {
       runId: payload.runId,
