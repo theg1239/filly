@@ -165,10 +165,10 @@ export const startRunAction = async (
   const count = Math.min(Math.max(settings.submissions, 1), 500);
 
   try {
-    await db.transaction(async (tx) => {
+    const updateFields = async (executor: { update: typeof db.update }) => {
       for (const [index, field] of fields.entries()) {
         try {
-          await tx
+          await executor
             .update(formFields)
             .set({
               config: {
@@ -190,7 +190,24 @@ export const startRunAction = async (
           throw error;
         }
       }
-    });
+    };
+
+    if ("transaction" in db && typeof db.transaction === "function") {
+      try {
+        await db.transaction(async (tx) => {
+          await updateFields(tx);
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("No transactions support")) {
+          await updateFields(db);
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      await updateFields(db);
+    }
   } catch (error) {
     console.error("form-field-update-failed", {
       error: error instanceof Error ? error.message : String(error),
