@@ -599,7 +599,7 @@ export const getFormRecordAction = async (formRecordId: string) => {
   };
 };
 
-export const processRunBatchAction = async (runId: string, batchSize = 3) => {
+export const processRunBatchAction = async (runId: string, batchSize?: number) => {
   const db = requireDb();
   if (!db) {
     return { ok: false as const, error: "DATABASE_URL is required." };
@@ -623,6 +623,9 @@ export const processRunBatchAction = async (runId: string, batchSize = 3) => {
       ),
     );
 
+  const effectiveBatchSize =
+    batchSize ?? Math.min(25, Math.max(3, Math.ceil(run.rateLimit * 3)));
+
   let pendingItems = await db.query.runItems.findMany({
     where: and(
       eq(runItems.runId, runId),
@@ -630,7 +633,7 @@ export const processRunBatchAction = async (runId: string, batchSize = 3) => {
       isNotNull(runItems.payload),
     ),
     orderBy: asc(runItems.index),
-    limit: batchSize,
+    limit: effectiveBatchSize,
   });
 
   if (!pendingItems.length) {
@@ -720,7 +723,7 @@ export const processRunBatchAction = async (runId: string, batchSize = 3) => {
       isNotNull(runItems.payload),
     ),
     orderBy: asc(runItems.index),
-    limit: batchSize,
+    limit: effectiveBatchSize,
   });
   let meta =
     (formRecord.rawSchema as { meta?: ParsedForm["meta"] } | null)?.meta ?? {};
@@ -731,41 +734,45 @@ export const processRunBatchAction = async (runId: string, batchSize = 3) => {
   const viewUrl = meta.viewUrl || fallbackViewUrl;
 
   let freshRequiredEntryIds: string[] = [];
-  try {
-    const headers = {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      "Accept-Language": "en-US,en;q=0.9",
-    };
-    const res = await fetch(viewUrl, {
-      headers,
-      cache: "no-store",
-      redirect: "follow",
-    });
-    if (res.ok) {
-      const html = await res.text();
-      const freshParsed = parseGoogleForm(html, res.url || viewUrl);
-      const freshMeta = extractFormMeta(html, res.url || viewUrl);
-      meta = { ...meta, ...freshMeta, ...freshParsed.meta };
-      freshRequiredEntryIds = freshParsed.fields
-        .filter((field) => field.required)
-        .map((field) => field.entryId);
-      await db
-        .update(forms)
-        .set({
-          rawSchema: {
-            ...(formRecord.rawSchema as Record<string, unknown>),
-            meta,
-          },
-        })
-        .where(eq(forms.id, formRecord.id));
+  const shouldRefreshMeta =
+    run.status === "preparing" || !meta.actionUrl || !meta.fbzx || !meta.viewUrl;
+  if (shouldRefreshMeta) {
+    try {
+      const headers = {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+      };
+      const res = await fetch(viewUrl, {
+        headers,
+        cache: "no-store",
+        redirect: "follow",
+      });
+      if (res.ok) {
+        const html = await res.text();
+        const freshParsed = parseGoogleForm(html, res.url || viewUrl);
+        const freshMeta = extractFormMeta(html, res.url || viewUrl);
+        meta = { ...meta, ...freshMeta, ...freshParsed.meta };
+        freshRequiredEntryIds = freshParsed.fields
+          .filter((field) => field.required)
+          .map((field) => field.entryId);
+        await db
+          .update(forms)
+          .set({
+            rawSchema: {
+              ...(formRecord.rawSchema as Record<string, unknown>),
+              meta,
+            },
+          })
+          .where(eq(forms.id, formRecord.id));
+      }
+    } catch (error) {
+      console.error("form-meta-refresh-failed", {
+        runId,
+        formId: formRecord.formId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-  } catch (error) {
-    console.error("form-meta-refresh-failed", {
-      runId,
-      formId: formRecord.formId,
-      error: error instanceof Error ? error.message : String(error),
-    });
   }
 
   const formUrl =
@@ -777,17 +784,21 @@ export const processRunBatchAction = async (runId: string, batchSize = 3) => {
   const referer = meta.fbzx
     ? `${viewUrl}?fbzx=${encodeURIComponent(meta.fbzx)}`
     : viewUrl;
-  const delayMs = Math.max(1000 / run.rateLimit, 150);
-  const nextDelayMs = Math.max(500, delayMs * pendingItems.length);
+  const intervalMs = Math.max(1000 / run.rateLimit, 150);
+  const nextDelayMs = Math.max(500, intervalMs * pendingItems.length);
 
   await db
     .update(runItems)
     .set({ status: "running" })
     .where(inArray(runItems.id, pendingItems.map((item) => item.id)));
 
-  let submitted = run.submitted;
-
-  for (const [index, item] of pendingItems.entries()) {
+  const startTime = Date.now();
+  const submitItem = async (item: typeof pendingItems[number], index: number) => {
+    const scheduleAt = startTime + index * intervalMs;
+    const waitMs = Math.max(0, scheduleAt - Date.now());
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
     const payload = (item.payload as PreviewSample | null) ?? {};
     const submissionTimestamp = String(Date.now());
     const fullPayload: Record<string, string | string[]> = {
@@ -946,9 +957,8 @@ export const processRunBatchAction = async (runId: string, batchSize = 3) => {
           completedAt: new Date(),
         })
         .where(eq(runItems.id, item.id));
-      if (accepted) {
-        submitted += 1;
-      }
+
+      return { accepted };
     } catch (error) {
       console.error("form-submit-error", {
         runId,
@@ -966,10 +976,15 @@ export const processRunBatchAction = async (runId: string, batchSize = 3) => {
           completedAt: new Date(),
         })
         .where(eq(runItems.id, item.id));
+      return { accepted: false };
     }
+  };
 
-    await sleep(delayMs);
-  }
+  const results = await Promise.all(
+    pendingItems.map((item, index) => submitItem(item, index)),
+  );
+  const acceptedCount = results.filter((result) => result.accepted).length;
+  const submitted = run.submitted + acceptedCount;
 
   const failedItems = await db.query.runItems.findMany({
     where: and(eq(runItems.runId, runId), eq(runItems.status, "failed")),

@@ -24,7 +24,7 @@ export const POST = async (req: Request) => {
     }
 
     console.info("qstash-run-start", { runId: payload.runId });
-    const result = await processRunBatchAction(payload.runId, 3);
+    const result = await processRunBatchAction(payload.runId);
     if (!result.ok) {
       console.error("qstash-run-failed", { runId: payload.runId, error: result.error });
       return NextResponse.json(result, { status: 200 });

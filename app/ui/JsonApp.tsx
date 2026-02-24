@@ -45,7 +45,7 @@ const baseState = {
   },
   settings: {
     submissions: 20,
-    rateLimit: 1,
+    rateLimit: 3,
     schedule: false,
   },
   preview: {
@@ -286,7 +286,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     const fields = (get("/form/fields") as FormField[]) ?? [];
     const settings = (get("/settings") as RunSettings) ?? {
       submissions: 20,
-      rateLimit: 1,
+      rateLimit: 3,
     };
 
     const result = await startRunAction(recordId, form, fields, settings);
@@ -436,7 +436,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                         <Slider
                           value={[rateLimit]}
                           min={1}
-                          max={5}
+                          max={10}
                           step={1}
                           onValueChange={(vals) => set("/settings/rateLimit", vals[0] ?? 1)}
                         />
