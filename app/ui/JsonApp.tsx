@@ -149,14 +149,27 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
   useRealtime({
     enabled: realtimeEnabled,
     channels: runId ? [`run-${runId}`] : [],
-    events: ["run.status"],
     onData: ({ data }) => {
-      if (!runId || data.runId !== runId) return;
-      set("/run/status", data.status);
-      set("/run/submitted", data.submitted);
-      set("/run/failed", data.failed);
-      if (typeof data.prepared === "number") {
-        set("/run/prepared", data.prepared);
+      if (!runId || !data || typeof data !== "object") return;
+      const payload = data as {
+        runId?: string;
+        status?: string;
+        submitted?: number;
+        failed?: number;
+        prepared?: number;
+      };
+      if (payload.runId !== runId) return;
+      if (typeof payload.status === "string") {
+        set("/run/status", payload.status);
+      }
+      if (typeof payload.submitted === "number") {
+        set("/run/submitted", payload.submitted);
+      }
+      if (typeof payload.failed === "number") {
+        set("/run/failed", payload.failed);
+      }
+      if (typeof payload.prepared === "number") {
+        set("/run/prepared", payload.prepared);
       }
     },
   });
@@ -204,7 +217,6 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
       const recordId = crypto.randomUUID();
       router.push(`/forms/${recordId}`);
       void parseFormAction(url, recordId);
-      set("/ui/loading/parse", false);
       return;
     }
 
