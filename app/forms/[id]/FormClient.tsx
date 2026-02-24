@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { JsonApp } from "@/app/ui/JsonApp";
-import { getFormRecordAction } from "@/app/actions/form-actions";
 import type { FormField } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,6 +13,7 @@ const createLoadingState = (recordId: string) => ({
     url: "",
     loaded: true,
     title: "Loading form...",
+    externalId: recordId,
     recordId,
     formId: "",
     formKind: "e" as "d" | "e",
@@ -121,69 +123,67 @@ const LoadingState = () => {
 };
 
 export default function FormClient({ formRecordId }: { formRecordId: string }) {
-  type FormState = ReturnType<typeof createLoadingState>;
-  const [state, setState] = useState<
-    | { status: "loading"; initialState: FormState }
-    | { status: "ready"; initialState: FormState }
-    | { status: "error"; message: string }
-  >({ status: "loading", initialState: createLoadingState(formRecordId) });
+  const [timedOut, setTimedOut] = useState(false);
+  const formData = useQuery(
+    api.forms.getByExternalId,
+    formRecordId ? { externalId: formRecordId } : "skip",
+  );
 
   useEffect(() => {
-    if (!formRecordId || formRecordId === "undefined") {
-      setState({ status: "error", message: "Form record id is missing." });
+    if (!formRecordId || formRecordId === "undefined") return;
+    if (formData) {
+      setTimedOut(false);
       return;
     }
+    const timer = setTimeout(() => setTimedOut(true), 8000);
+    return () => clearTimeout(timer);
+  }, [formData, formRecordId]);
 
-    let active = true;
-    let retries = 0;
-
-    const load = async () => {
-      const result = await getFormRecordAction(formRecordId);
-      if (!active) return;
-
-      if (result.ok) {
-        setState({
-          status: "ready",
-          initialState: {
-            form: result.form,
-            run: result.run ?? createLoadingState(formRecordId).run,
-          },
-        });
-        return;
-      }
-
-      if (retries < 5) {
-        retries += 1;
-        setTimeout(load, 600);
-        return;
-      }
-
-      setState({ status: "error", message: result.error ?? "Form not found." });
-    };
-
-    load();
-    return () => {
-      active = false;
-    };
-  }, [formRecordId]);
-
-  if (state.status === "error") {
+  if (!formRecordId || formRecordId === "undefined") {
     return (
       <div className="mx-auto w-full max-w-2xl px-6 py-16 text-center text-sm text-muted-foreground">
-        {state.message}
+        Form record id is missing.
       </div>
     );
   }
 
-  if (state.status === "loading") {
+  if (formData === undefined) {
     return <LoadingState />;
   }
+
+  if (formData === null && !timedOut) {
+    return <LoadingState />;
+  }
+
+  if (formData === null) {
+    return (
+      <div className="mx-auto w-full max-w-2xl px-6 py-16 text-center text-sm text-muted-foreground">
+        Form not found.
+      </div>
+    );
+  }
+
+  const initialState = {
+    form: {
+      url: formData.form.url,
+      loaded: true,
+      title: formData.form.title,
+      externalId: formData.form.externalId,
+      recordId: formData.form.id,
+      formId: formData.form.formId,
+      formKind: formData.form.formKind,
+      fields: formData.fields,
+    },
+    run:
+      formData.run ??
+      createLoadingState(formRecordId).run,
+  };
 
   return (
     <JsonApp
       mode="configure"
-      initialState={state.initialState}
-      key={state.status}
+      initialState={initialState}
+      key={formData.form.id}
     />
   );
 }

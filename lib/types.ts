@@ -62,23 +62,30 @@ export type PreviewSampleValue = string | string[];
 
 export type PreviewSample = Record<string, PreviewSampleValue>;
 
+export type RunItemStatus = "preparing" | "queued" | "running" | "completed" | "failed";
+
 export type RunItem = {
   id: string;
   index: number;
-  status: "preparing" | "queued" | "running" | "completed" | "failed";
+  status: RunItemStatus;
   payload?: PreviewSample | null;
   response?: unknown;
   error?: string | null;
 };
 
+export type RunStatus = "idle" | "queued" | "preparing" | "running" | "completed" | "failed";
+
 export type RunRecord = {
   id: string;
   formId: string;
   formKind: "d" | "e";
-  status: "idle" | "queued" | "preparing" | "running" | "completed" | "failed";
+  status: RunStatus;
   count: number;
   rateLimit: number;
   submitted: number;
+  failed: number;
+  prepared: number;
+  error?: string;
   items: RunItem[];
   createdAt: number;
 };

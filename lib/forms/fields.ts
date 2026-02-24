@@ -85,7 +85,7 @@ const extractOptions = (item: unknown[]): string[] | undefined => {
 };
 
 export const parseFieldsFromItems = (items: unknown[]): FormField[] => {
-  const mapped = items.map((item) => {
+  const mapped: Array<FormField | null> = items.map((item) => {
     if (!Array.isArray(item)) return null;
     const rawLabel = typeof item[1] === "string" ? item[1] : "Untitled";
     const label = normalizeText(rawLabel) || "Untitled";

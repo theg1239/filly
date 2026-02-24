@@ -181,3 +181,37 @@
     letter-spacing: var(--tracking-normal);
   }
 }
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+.progress-indeterminate {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--primary) 65%, transparent) 0%,
+    color-mix(in srgb, var(--primary) 90%, transparent) 50%,
+    color-mix(in srgb, var(--primary) 65%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation:
+    progress-indeterminate 1.15s ease-in-out infinite,
+    progress-shimmer 1.3s linear infinite;
+}
+
+@keyframes progress-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}

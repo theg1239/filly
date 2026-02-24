@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ActionProvider,
@@ -13,13 +13,11 @@ import {
 } from "@json-render/react";
 import { experimental_useObject as useObject } from "@ai-sdk/react";
 import { registry } from "./registry";
-import {
-  parseFormAction,
-  startRunAction,
-} from "@/app/actions/form-actions";
-import type { FormField, ParsedForm, RunSettings } from "@/lib/types";
+import { useAction, useMutation, useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import type { FormField, RunSettings } from "@/lib/types";
 import { samplesSchema, type SamplesOutput } from "@/lib/samples-schema";
-import { useRealtime } from "@/lib/realtime-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -39,6 +37,7 @@ const baseState = {
     url: "",
     loaded: false,
     title: "",
+    externalId: "",
     recordId: "",
     formId: "",
     formKind: "e",
@@ -86,7 +85,9 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
   const runLoading = Boolean(useStateValue("/ui/loading/run"));
   const runId = useStateValue("/run/id") as string | null;
   const runStatus = useStateValue("/run/status") as string | null;
-  const runActive = runStatus === "preparing" || runStatus === "running";
+  const runSubmitted = (get("/run/submitted") as number) ?? 0;
+  const runFailed = (get("/run/failed") as number) ?? 0;
+  const runActive = runStatus === "preparing" || runStatus === "running" || runStatus === "queued";
   const fields = (get("/form/fields") as FormField[]) ?? [];
   const submissions = (get("/settings/submissions") as number) ?? 20;
   const rateLimit = (get("/settings/rateLimit") as number) ?? 1;
@@ -99,6 +100,8 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     "rounded-none border-2 border-foreground shadow-[4px_4px_0_0_rgba(0,0,0,0.65)]";
   const neoInput = "rounded-none border-2 border-foreground bg-background";
   const previewLimit = 3;
+  const [showComplete, setShowComplete] = useState(false);
+  const lastStatusRef = useRef<string | null>(null);
 
   const {
     submit: submitPreview,
@@ -144,35 +147,30 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     [],
   );
 
-  const realtimeEnabled = Boolean(runId) && runStatus !== "completed" && runStatus !== "failed";
+  const parseForm = useAction(api.formsActions.parseForm);
+  const startRun = useMutation(api.runs.startRun);
 
-  useRealtime({
-    enabled: realtimeEnabled,
-    channels: runId ? [`run-${runId}`] : [],
-    onData: ({ data }) => {
-      if (!runId || !data || typeof data !== "object") return;
-      const payload = data as {
-        runId?: string;
-        status?: string;
-        submitted?: number;
-        failed?: number;
-        prepared?: number;
-      };
-      if (payload.runId !== runId) return;
-      if (typeof payload.status === "string") {
-        set("/run/status", payload.status);
-      }
-      if (typeof payload.submitted === "number") {
-        set("/run/submitted", payload.submitted);
-      }
-      if (typeof payload.failed === "number") {
-        set("/run/failed", payload.failed);
-      }
-      if (typeof payload.prepared === "number") {
-        set("/run/prepared", payload.prepared);
-      }
-    },
-  });
+  const runStatusQuery = useQuery(
+    api.runs.getStatus,
+    runId ? { runId: runId as Id<"runs"> } : "skip",
+  );
+
+  useEffect(() => {
+    if (!runId || !runStatusQuery) return;
+    const nextStatus = runStatusQuery.status;
+    const previousStatus = lastStatusRef.current;
+    lastStatusRef.current = nextStatus;
+    set("/run/status", runStatusQuery.status);
+    set("/run/submitted", runStatusQuery.submitted);
+    set("/run/failed", runStatusQuery.failed);
+    set("/run/prepared", runStatusQuery.prepared);
+    if (runStatusQuery.status === "failed" && runStatusQuery.error) {
+      set("/ui/error", runStatusQuery.error);
+    }
+    if (previousStatus && previousStatus !== "completed" && nextStatus === "completed") {
+      setShowComplete(true);
+    }
+  }, [runId, runStatusQuery, set]);
 
   useEffect(() => {
     set("/ui/loading/preview", previewStreaming);
@@ -216,11 +214,12 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     if (mode === "landing") {
       const recordId = crypto.randomUUID();
       router.push(`/forms/${recordId}`);
-      void parseFormAction(url, recordId);
+      void parseForm({ url, externalId: recordId });
       return;
     }
 
-    const result = await parseFormAction(url);
+    const externalId = (get("/form/externalId") as string) ?? "";
+    const result = await parseForm({ url, externalId });
     if (!result.ok) {
       set("/ui/error", result.error ?? "Failed to parse form.");
       set("/ui/loading/parse", false);
@@ -231,7 +230,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     set("/form/title", result.form.title);
     set(
       "/form/fields",
-      result.form.fields.map((field) => ({
+      result.form.fields.map((field: FormField) => ({
         ...field,
         enabled: field.enabled ?? true,
         strategy: field.strategy ?? "random",
@@ -239,7 +238,8 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
         pattern: field.pattern ?? "",
       })),
     );
-    set("/form/recordId", result.formRecordId);
+    set("/form/recordId", result.form.recordId);
+    set("/form/externalId", result.form.externalId ?? externalId);
     set("/form/formId", result.form.formId);
     set("/form/formKind", result.form.formKind);
     set("/ui/loading/parse", false);
@@ -256,32 +256,48 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
   const handleRun = async () => {
     set("/ui/loading/run", true);
     set("/ui/error", null);
+    setShowComplete(false);
 
     const recordId = (get("/form/recordId") as string) ?? "";
-    const form: ParsedForm = {
-      formId: (get("/form/formId") as string) ?? "",
-      formKind: (get("/form/formKind") as "d" | "e") ?? "e",
-      title: (get("/form/title") as string) ?? "",
-      fields: (get("/form/fields") as FormField[]) ?? [],
-    };
+    if (!recordId) {
+      set("/ui/error", "Form record is missing.");
+      set("/ui/loading/run", false);
+      return;
+    }
     const fields = (get("/form/fields") as FormField[]) ?? [];
     const settings = (get("/settings") as RunSettings) ?? {
       submissions: 20,
       rateLimit: 3,
     };
+    const runSettings: RunSettings = {
+      submissions: settings.submissions,
+      rateLimit: settings.rateLimit,
+    };
 
-    const result = await startRunAction(recordId, form, fields, settings);
+    const result = await startRun({
+      formId: recordId as Id<"forms">,
+      fields: fields.map((field) => ({
+        id: field.id as Id<"formFields">,
+        prompt: field.prompt ?? undefined,
+        strategy: field.strategy ?? undefined,
+        fixedValue: field.fixedValue ?? undefined,
+        pattern: field.pattern ?? undefined,
+        enabled: field.enabled ?? undefined,
+        validation: field.validation ?? undefined,
+      })),
+      settings: runSettings,
+    });
     if (!result.ok) {
-      set("/ui/error", result.error ?? "Failed to start run.");
+      set("/ui/error", "Failed to start run.");
       set("/ui/loading/run", false);
       return;
     }
 
     set("/run/id", result.run.id);
-    set("/run/status", "preparing");
+    set("/run/status", result.run.status);
     set("/run/submitted", 0);
     set("/run/failed", 0);
-    set("/run/prepared", 0);
+    set("/run/prepared", result.run.prepared);
     set("/ui/loading/run", false);
   };
 
@@ -496,6 +512,44 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
           </div>
         </div>
       </main>
+      {showComplete ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-6 py-10">
+          <div
+            className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+            onClick={() => setShowComplete(false)}
+            aria-hidden="true"
+          />
+          <Card className={`${neoCardAccent} relative w-full max-w-lg p-6`}>
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Generation Complete
+              </p>
+              <h2 className="text-2xl font-black uppercase tracking-tight text-foreground">
+                Run finished
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {runSubmitted} submissions sent
+                {runFailed ? ` • ${runFailed} failed` : ""}
+              </p>
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <Button
+                variant="outline"
+                className={`${neoButton} bg-background text-foreground`}
+                onClick={() => router.push("/")}
+              >
+                Go Home
+              </Button>
+              <Button
+                className={`${neoButton} bg-primary text-primary-foreground`}
+                onClick={() => setShowComplete(false)}
+              >
+                Run Again
+              </Button>
+            </div>
+          </Card>
+        </div>
+      ) : null}
     </div>
   );
 };

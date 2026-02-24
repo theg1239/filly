@@ -2,14 +2,10 @@ import type { ParsedForm } from "../types";
 import { parseFieldsFromItems } from "./fields";
 import { extractFormMeta, extractTitleFromHtml } from "./html";
 import { findCandidateItems, findPublicLoadData } from "./load-data";
-
-export const parseFormId = (url: string) => {
-  const matchE = url.match(/\/d\/e\/([a-zA-Z0-9_-]+)/);
-  if (matchE) return { formId: matchE[1], formKind: "e" as const };
-  const matchD = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  if (matchD) return { formId: matchD[1], formKind: "d" as const };
-  return null;
-};
+import { buildFormResponseUrl, buildViewFormUrl, parseFormId } from "./urls";
+import { fetchFormHtml } from "./request";
+import { normalizeFields } from "./normalize";
+import { reconcileFields } from "./reconcile";
 
 export const parseGoogleForm = (html: string, url: string): ParsedForm => {
   const formInfo = parseFormId(url);
@@ -41,18 +37,8 @@ export const parseGoogleForm = (html: string, url: string): ParsedForm => {
   };
 };
 
-export const buildFormResponseUrl = (formId: string, formKind: "d" | "e") => {
-  if (formKind === "e") {
-    return `https://docs.google.com/forms/d/e/${formId}/formResponse`;
-  }
-  return `https://docs.google.com/forms/d/${formId}/formResponse`;
-};
-
-export const buildViewFormUrl = (formId: string, formKind: "d" | "e") => {
-  if (formKind === "e") {
-    return `https://docs.google.com/forms/d/e/${formId}/viewform?usp=sf_link`;
-  }
-  return `https://docs.google.com/forms/d/${formId}/viewform?usp=sf_link`;
-};
-
+export { buildFormResponseUrl, buildViewFormUrl, parseFormId } from "./urls";
 export { extractFormMeta } from "./html";
+export { fetchFormHtml } from "./request";
+export { normalizeFields } from "./normalize";
+export { reconcileFields } from "./reconcile";

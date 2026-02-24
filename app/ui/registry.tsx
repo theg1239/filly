@@ -447,6 +447,7 @@ const RunStatus = () => {
         100,
       )
     : 0;
+  const isPreparing = status === "preparing";
 
   return (
     <Card className={`${neoCard} space-y-4 p-6`}>
@@ -460,7 +461,7 @@ const RunStatus = () => {
           {failed ? ` · ${failed} failed` : ""}
         </span>
       </div>
-      <Progress value={progress} />
+      <Progress value={progress} indeterminate={isPreparing} />
       <p className="text-xs text-muted-foreground">
         Processing submissions in controlled batches.
       </p>
