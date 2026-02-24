@@ -15,6 +15,13 @@ const createLoadingState = (recordId: string) => ({
     formKind: "e" as "d" | "e",
     fields: [] as FormField[],
   },
+  run: {
+    id: "",
+    status: "idle" as "idle" | "failed" | "queued" | "preparing" | "running" | "completed",
+    submitted: 0,
+    failed: 0,
+    prepared: 0,
+  },
 });
 
 export default function FormClient({ formRecordId }: { formRecordId: string }) {
@@ -39,7 +46,13 @@ export default function FormClient({ formRecordId }: { formRecordId: string }) {
       if (!active) return;
 
       if (result.ok) {
-        setState({ status: "ready", initialState: { form: result.form } });
+        setState({
+          status: "ready",
+          initialState: {
+            form: result.form,
+            run: result.run ?? createLoadingState(formRecordId).run,
+          },
+        });
         return;
       }
 

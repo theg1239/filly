@@ -1,6 +1,6 @@
 "use server";
 
-import { eq, and, asc, inArray, isNotNull } from "@/lib/drizzle";
+import { eq, and, asc, desc, inArray, isNotNull } from "@/lib/drizzle";
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db";
 import { formFields, forms, runItems, runs } from "@/lib/schema";
@@ -553,6 +553,37 @@ export const getFormRecordAction = async (formRecordId: string) => {
     } satisfies FormField;
   });
 
+  const latestRun = await db.query.runs.findFirst({
+    where: eq(runs.formId, formRecordId),
+    orderBy: desc(runs.createdAt),
+  });
+
+  let run: {
+    id: string;
+    status: RunRecord["status"];
+    submitted: number;
+    failed: number;
+    prepared: number;
+  } | null = null;
+
+  if (latestRun) {
+    const failedItems = await db.query.runItems.findMany({
+      where: and(eq(runItems.runId, latestRun.id), eq(runItems.status, "failed")),
+      columns: { id: true },
+    });
+    const preparedItems = await db.query.runItems.findMany({
+      where: and(eq(runItems.runId, latestRun.id), isNotNull(runItems.payload)),
+      columns: { id: true },
+    });
+    run = {
+      id: latestRun.id,
+      status: (latestRun.status as RunRecord["status"]) ?? "queued",
+      submitted: latestRun.submitted,
+      failed: failedItems.length,
+      prepared: preparedItems.length,
+    };
+  }
+
   return {
     ok: true as const,
     form: {
@@ -564,6 +595,7 @@ export const getFormRecordAction = async (formRecordId: string) => {
       formKind: (formRecord.formKind as "d" | "e") ?? "e",
       fields,
     },
+    run,
   };
 };
 

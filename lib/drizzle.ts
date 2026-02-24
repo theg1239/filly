@@ -1,4 +1,4 @@
-export { and, asc, eq, inArray, isNotNull, relations } from "drizzle-orm";
+export { and, asc, desc, eq, inArray, isNotNull, relations } from "drizzle-orm";
 export { drizzle } from "drizzle-orm/neon-http";
 export {
   boolean,
