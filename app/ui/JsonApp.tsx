@@ -49,7 +49,7 @@ const baseState = {
     schedule: false,
   },
   preview: {
-    samples: [] as Record<string, string>[],
+    samples: [] as Record<string, string | string[]>[],
   },
   run: {
     id: "",
@@ -208,10 +208,13 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
       .filter((sample) => Boolean(sample && typeof sample === "object"))
       .map((sample) =>
         Object.fromEntries(
-          Object.entries(sample as Record<string, unknown>).map(([key, value]) => [
-            key,
-            value == null ? "" : String(value),
-          ]),
+          Object.entries(sample as Record<string, unknown>).map(([key, value]) => {
+            if (value == null) return [key, ""];
+            if (Array.isArray(value)) {
+              return [key, value.map((entry) => (entry == null ? "" : String(entry)))];
+            }
+            return [key, String(value)];
+          }),
         ),
       );
     set("/preview/samples", normalized.slice(0, previewLimit));
