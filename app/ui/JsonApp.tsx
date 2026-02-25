@@ -57,6 +57,7 @@ const baseState = {
     submitted: 0,
     failed: 0,
     prepared: 0,
+    error: null as string | null,
   },
 };
 
@@ -89,6 +90,8 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
   const runFailed = (get("/run/failed") as number) ?? 0;
   const runActive = runStatus === "preparing" || runStatus === "running" || runStatus === "queued";
   const fields = (get("/form/fields") as FormField[]) ?? [];
+  const enabledCount = fields.filter((field) => field.enabled !== false).length;
+  const formUrl = (get("/form/url") as string) ?? "";
   const submissions = (get("/settings/submissions") as number) ?? 20;
   const rateLimit = (get("/settings/rateLimit") as number) ?? 1;
   const etaSeconds = Math.max(Math.ceil(submissions / Math.max(rateLimit, 1)), 1);
@@ -102,6 +105,8 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
   const previewLimit = 3;
   const [showComplete, setShowComplete] = useState(false);
   const lastStatusRef = useRef<string | null>(null);
+  const clampNumber = (value: number, min: number, max: number) =>
+    Number.isFinite(value) ? Math.min(Math.max(value, min), max) : min;
 
   const {
     submit: submitPreview,
@@ -164,6 +169,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     set("/run/submitted", runStatusQuery.submitted);
     set("/run/failed", runStatusQuery.failed);
     set("/run/prepared", runStatusQuery.prepared);
+    set("/run/error", runStatusQuery.error ?? null);
     if (runStatusQuery.status === "failed" && runStatusQuery.error) {
       set("/ui/error", runStatusQuery.error);
     }
@@ -213,8 +219,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
 
     if (mode === "landing") {
       const recordId = crypto.randomUUID();
-      router.push(`/forms/${recordId}`);
-      void parseForm({ url, externalId: recordId });
+      router.push(`/forms/${recordId}?url=${encodeURIComponent(url)}`);
       return;
     }
 
@@ -247,6 +252,10 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
 
   const handlePreview = async () => {
     set("/ui/error", null);
+    if (!enabledCount) {
+      set("/ui/error", "Enable at least one field before generating a preview.");
+      return;
+    }
     clearPreview();
     set("/preview/samples", []);
     const fields = (get("/form/fields") as FormField[]) ?? [];
@@ -264,15 +273,22 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
       set("/ui/loading/run", false);
       return;
     }
+    if (!enabledCount) {
+      set("/ui/error", "Enable at least one field before starting a run.");
+      set("/ui/loading/run", false);
+      return;
+    }
     const fields = (get("/form/fields") as FormField[]) ?? [];
     const settings = (get("/settings") as RunSettings) ?? {
       submissions: 20,
       rateLimit: 3,
     };
     const runSettings: RunSettings = {
-      submissions: settings.submissions,
-      rateLimit: settings.rateLimit,
+      submissions: clampNumber(settings.submissions, 1, 500),
+      rateLimit: clampNumber(settings.rateLimit, 1, 25),
     };
+    set("/settings/submissions", runSettings.submissions);
+    set("/settings/rateLimit", runSettings.rateLimit);
 
     const result = await startRun({
       formId: recordId as Id<"forms">,
@@ -298,6 +314,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     set("/run/submitted", 0);
     set("/run/failed", 0);
     set("/run/prepared", result.run.prepared);
+    set("/run/error", null);
     set("/ui/loading/run", false);
   };
 
@@ -360,7 +377,8 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                       {(get("/form/title") as string) || "Loaded form"}
                     </h1>
                     <p className="text-sm text-muted-foreground">
-                      {fields.length} fields • Status {formLoaded ? "Parsed" : "Waiting"}
+                      {fields.length} fields • {enabledCount} enabled • Status{" "}
+                      {formLoaded ? "Parsed" : "Waiting"}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-3">
@@ -371,6 +389,15 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                     >
                       Reset Defaults
                     </Button>
+                    {formUrl ? (
+                      <Button
+                        variant="outline"
+                        className={`${neoButton} bg-secondary text-secondary-foreground`}
+                        onClick={() => window.open(formUrl, "_blank")}
+                      >
+                        Open Form
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -415,6 +442,12 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                               onChange={(event) =>
                                 set("/settings/submissions", Number(event.target.value))
                               }
+                              onBlur={(event) =>
+                                set(
+                                  "/settings/submissions",
+                                  clampNumber(Number(event.target.value), 1, 500),
+                                )
+                              }
                               className="rounded-none border-none bg-transparent focus-visible:ring-0"
                             />
                             <div className="border-l-2 border-foreground bg-muted px-3 py-2 text-xs text-muted-foreground">
@@ -433,7 +466,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                         <Slider
                           value={[rateLimit]}
                           min={1}
-                          max={10}
+                          max={25}
                           step={1}
                           onValueChange={(vals) => set("/settings/rateLimit", vals[0] ?? 1)}
                         />
@@ -462,14 +495,14 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                           variant="outline"
                           className={`w-full ${neoButton} bg-background text-foreground`}
                           onClick={handlePreview}
-                          disabled={previewLoading}
+                          disabled={previewLoading || !enabledCount}
                         >
                           {previewLoading ? "Generating..." : "Preview Samples"}
                         </Button>
                         <Button
                           className={`w-full ${neoButton} bg-primary text-primary-foreground`}
                           onClick={handleRun}
-                          disabled={!formLoaded || runLoading}
+                          disabled={!formLoaded || runLoading || runActive || !enabledCount}
                         >
                           {runLoading ? "Starting..." : "Start Generation"}
                         </Button>

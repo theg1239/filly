@@ -1,6 +1,6 @@
 import type { ParsedForm } from "../types";
 import { parseFieldsFromItems } from "./fields";
-import { extractFormMeta, extractTitleFromHtml } from "./html";
+import { detectFormAccessIssue, extractFormMeta, extractTitleFromHtml } from "./html";
 import { findCandidateItems, findPublicLoadData } from "./load-data";
 import { buildFormResponseUrl, buildViewFormUrl, parseFormId } from "./urls";
 import { fetchFormHtml } from "./request";
@@ -38,7 +38,7 @@ export const parseGoogleForm = (html: string, url: string): ParsedForm => {
 };
 
 export { buildFormResponseUrl, buildViewFormUrl, parseFormId } from "./urls";
-export { extractFormMeta } from "./html";
+export { detectFormAccessIssue, extractFormMeta } from "./html";
 export { fetchFormHtml } from "./request";
 export { normalizeFields } from "./normalize";
 export { reconcileFields } from "./reconcile";

@@ -3,7 +3,7 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
-import { fetchFormHtml, normalizeFields, parseGoogleForm } from "../lib/forms";
+import { detectFormAccessIssue, fetchFormHtml, normalizeFields, parseGoogleForm } from "../lib/forms";
 
 const responseFieldValidator = v.object({
   id: v.string(),
@@ -79,8 +79,19 @@ export const parseForm: ReturnType<typeof action> = action({
 
     try {
       const { html, url } = await fetchFormHtml(args.url);
+      const accessIssue = detectFormAccessIssue(html);
+      if (accessIssue) {
+        return { ok: false, error: accessIssue };
+      }
       const parsed = parseGoogleForm(html, url);
       const fields = normalizeFields(parsed.fields);
+      if (!fields.length) {
+        return {
+          ok: false,
+          error:
+            "No fields detected. Make sure the form is public and contains questions.",
+        };
+      }
 
       await ctx.runMutation(api.forms.upsertForm, {
         externalId,

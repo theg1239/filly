@@ -1,12 +1,17 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { defineRegistry, useBoundProp, useStateStore, type BaseComponentProps } from "@json-render/react";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { catalog } from "./catalog";
 import { Button as UIButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -210,6 +215,8 @@ const FormMeta = () => {
 const FieldList = () => {
   const { get, set } = useStateStore();
   const fields = (get("/form/fields") as FormField[]) ?? [];
+  const [query, setQuery] = useState("");
+  const [showEnabledOnly, setShowEnabledOnly] = useState(false);
 
   if (!fields.length) {
     return (
@@ -265,9 +272,56 @@ const FieldList = () => {
     }
   };
 
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredFields = fields
+    .map((field, index) => ({ field, index }))
+    .filter(({ field }) => {
+      if (showEnabledOnly && field.enabled === false) return false;
+      if (!normalizedQuery) return true;
+      return field.label.toLowerCase().includes(normalizedQuery);
+    });
+
+  const setAllEnabled = (enabled: boolean) => {
+    fields.forEach((_, index) => set(`/form/fields/${index}/enabled`, enabled));
+  };
+
   return (
     <div className="grid gap-4">
-      {fields.map((field, index) => (
+      <Card className={`${neoCard} p-4`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Input
+            value={query}
+            placeholder="Search fields..."
+            onChange={(event) => setQuery(event.target.value)}
+            className={`${neoInput} flex-1 min-w-[200px]`}
+          />
+          <UIButton
+            variant="outline"
+            className="rounded-none border-2 border-foreground bg-background text-xs"
+            onClick={() => setShowEnabledOnly((prev) => !prev)}
+          >
+            {showEnabledOnly ? "Show All" : "Show Enabled"}
+          </UIButton>
+          <UIButton
+            variant="outline"
+            className="rounded-none border-2 border-foreground bg-background text-xs"
+            onClick={() => setAllEnabled(true)}
+          >
+            Enable All
+          </UIButton>
+          <UIButton
+            variant="outline"
+            className="rounded-none border-2 border-foreground bg-background text-xs"
+            onClick={() => setAllEnabled(false)}
+          >
+            Disable All
+          </UIButton>
+          <span className="text-xs text-muted-foreground">
+            {filteredFields.length}/{fields.length}
+          </span>
+        </div>
+      </Card>
+      {filteredFields.map(({ field, index }) => (
         <Card key={field.id} className={`space-y-4 p-5 ${neoCard}`}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex gap-3">
@@ -392,13 +446,31 @@ const PreviewList = () => {
   const { get } = useStateStore();
   const samples = (get("/preview/samples") as PreviewSample[]) ?? [];
   const fields = (get("/form/fields") as FormField[]) ?? [];
-  const visibleFields = fields.slice(0, 4);
+  const previewLoading = Boolean(get("/ui/loading/preview"));
+  const [showAll, setShowAll] = useState(false);
+  const visibleFields = showAll ? fields : fields.slice(0, 4);
   const formatValue = (value: PreviewSample[keyof PreviewSample]) => {
     if (Array.isArray(value)) {
       return value.join(", ");
     }
     return value ?? "-";
   };
+
+  if (previewLoading) {
+    return (
+      <Card className={`${neoCard} space-y-4 p-6`}>
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-4 w-36 rounded-none" />
+          <Skeleton className="h-4 w-16 rounded-none" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-3 w-full rounded-none" />
+          <Skeleton className="h-3 w-[90%] rounded-none" />
+          <Skeleton className="h-3 w-[85%] rounded-none" />
+        </div>
+      </Card>
+    );
+  }
 
   if (!samples.length) {
     return (
@@ -410,6 +482,20 @@ const PreviewList = () => {
 
   return (
     <Card className={`${neoCard} p-4`}>
+      <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
+        <span>
+          Showing {visibleFields.length} of {fields.length} fields
+        </span>
+        {fields.length > 4 ? (
+          <UIButton
+            variant="outline"
+            className="rounded-none border-2 border-foreground bg-background text-[10px]"
+            onClick={() => setShowAll((prev) => !prev)}
+          >
+            {showAll ? "Show Less" : "Show All"}
+          </UIButton>
+        ) : null}
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
@@ -437,10 +523,15 @@ const PreviewList = () => {
 const RunStatus = () => {
   const { get } = useStateStore();
   const status = (get("/run/status") as string) ?? "idle";
+  const runId = (get("/run/id") as Id<"runs">) ?? "";
   const submitted = (get("/run/submitted") as number) ?? 0;
   const failed = (get("/run/failed") as number) ?? 0;
   const prepared = (get("/run/prepared") as number) ?? 0;
+  const runError = (get("/run/error") as string | null) ?? null;
   const total = (get("/settings/submissions") as number) ?? 0;
+  const resumeRun = useMutation(api.runs.resumeRun);
+  const lastChangeRef = useRef(Date.now());
+  const lastResumeRef = useRef(0);
   const progress = total
     ? Math.min(
         ((status === "preparing" ? prepared : submitted) / total) * 100,
@@ -448,6 +539,25 @@ const RunStatus = () => {
       )
     : 0;
   const isPreparing = status === "preparing";
+  const canResume = Boolean(runId) && status === "preparing";
+  const canRetry = Boolean(runId) && status === "failed";
+
+  useEffect(() => {
+    lastChangeRef.current = Date.now();
+  }, [status, prepared, submitted, failed]);
+
+  useEffect(() => {
+    if (!canResume) return;
+    const interval = setInterval(() => {
+      const idleMs = Date.now() - lastChangeRef.current;
+      const sinceResume = Date.now() - lastResumeRef.current;
+      if (idleMs > 15000 && sinceResume > 15000) {
+        lastResumeRef.current = Date.now();
+        void resumeRun({ runId });
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [canResume, resumeRun, runId]);
 
   return (
     <Card className={`${neoCard} space-y-4 p-6`}>
@@ -465,6 +575,32 @@ const RunStatus = () => {
       <p className="text-xs text-muted-foreground">
         Processing submissions in controlled batches.
       </p>
+      {runError ? (
+        <div className="rounded-none border-2 border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {runError}
+        </div>
+      ) : null}
+      {canResume ? (
+        <div className="flex justify-end">
+          <UIButton
+            variant="outline"
+            className="rounded-none border-2 border-foreground bg-background text-xs"
+            onClick={() => resumeRun({ runId })}
+          >
+            Resume
+          </UIButton>
+        </div>
+      ) : null}
+      {canRetry ? (
+        <div className="flex justify-end">
+          <UIButton
+            className="rounded-none border-2 border-foreground bg-primary text-xs text-primary-foreground"
+            onClick={() => resumeRun({ runId })}
+          >
+            Retry
+          </UIButton>
+        </div>
+      ) : null}
     </Card>
   );
 };

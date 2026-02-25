@@ -69,3 +69,34 @@ export const extractFormMeta = (html: string, url: string) => {
     viewUrl: url,
   };
 };
+
+export const detectFormAccessIssue = (html: string) => {
+  const lower = html.toLowerCase();
+
+  if (
+    lower.includes("sign in to continue") ||
+    lower.includes("sign in to view") ||
+    lower.includes("sign in to access")
+  ) {
+    return "This form requires sign-in or permission to view.";
+  }
+
+  if (
+    lower.includes("you need permission") ||
+    lower.includes("request access") ||
+    lower.includes("requires permission") ||
+    lower.includes("only users in the owner's organization")
+  ) {
+    return "This form is restricted to specific users or an organization.";
+  }
+
+  if (
+    lower.includes("no longer accepting responses") ||
+    lower.includes("form is no longer accepting responses") ||
+    lower.includes("this form is closed")
+  ) {
+    return "This form is closed and no longer accepting responses.";
+  }
+
+  return null;
+};
