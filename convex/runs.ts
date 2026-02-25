@@ -1,6 +1,39 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+
+const activeRunStatuses = new Set(["preparing", "queued", "running"]);
+
+const buildRunSummary = (run: {
+  _id: Id<"runs">;
+  status: string;
+  submitted: number;
+  failed: number;
+  prepared: number;
+}) => ({
+  id: run._id,
+  status: run.status,
+  submitted: run.submitted,
+  failed: run.failed,
+  prepared: run.prepared,
+});
+
+const clearActiveRunIfMatch = async (
+  ctx: {
+    db: {
+      get: (id: Id<"forms">) => Promise<{ activeRunId?: Id<"runs"> } | null>;
+      patch: (id: Id<"forms">, value: { activeRunId?: Id<"runs"> }) => Promise<void>;
+    };
+  },
+  formId: Id<"forms">,
+  runId: Id<"runs">,
+) => {
+  const form = await ctx.db.get(formId);
+  if (form?.activeRunId === runId) {
+    await ctx.db.patch(formId, { activeRunId: undefined });
+  }
+};
 
 export const getStatus = query({
   args: { runId: v.id("runs") },
@@ -137,6 +170,21 @@ export const getFormSnapshot = query({
   },
 });
 
+export const getFormActiveRun = query({
+  args: { formId: v.id("forms") },
+  returns: v.union(
+    v.object({
+      activeRunId: v.union(v.id("runs"), v.null()),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const form = await ctx.db.get(args.formId);
+    if (!form) return null;
+    return { activeRunId: form.activeRunId ?? null };
+  },
+});
+
 export const listItemsByStatus = query({
   args: {
     runId: v.id("runs"),
@@ -199,6 +247,43 @@ export const startRun = mutation({
     const count = Math.min(Math.max(args.settings.submissions, 1), 500);
     const rateLimit = Math.max(args.settings.rateLimit, 1);
 
+    const form = await ctx.db.get(args.formId);
+    if (!form) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Form not found." });
+    }
+
+    if (form.activeRunId) {
+      const activeRun = await ctx.db.get(form.activeRunId);
+      if (activeRun && activeRunStatuses.has(activeRun.status)) {
+        return {
+          ok: true,
+          run: buildRunSummary(activeRun),
+        };
+      }
+      await ctx.db.patch(form._id, { activeRunId: undefined });
+    }
+
+    const fallbackActive = await ctx.db
+      .query("runs")
+      .withIndex("by_form", (q) => q.eq("formId", form._id))
+      .order("desc")
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("status"), "preparing"),
+          q.eq(q.field("status"), "queued"),
+          q.eq(q.field("status"), "running"),
+        ),
+      )
+      .first();
+
+    if (fallbackActive) {
+      await ctx.db.patch(form._id, { activeRunId: fallbackActive._id });
+      return {
+        ok: true,
+        run: buildRunSummary(fallbackActive),
+      };
+    }
+
     for (const [index, field] of args.fields.entries()) {
       await ctx.db.patch(field.id, {
         order: index,
@@ -224,6 +309,7 @@ export const startRun = mutation({
       createdAt: Date.now(),
       startedAt: Date.now(),
     });
+    await ctx.db.patch(form._id, { activeRunId: runId });
 
     for (let index = 0; index < count; index += 1) {
       await ctx.db.insert("runItems", {
@@ -311,11 +397,19 @@ export const setRunStatusOnly = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Run not found." });
+    }
+
     await ctx.db.patch(args.runId, {
       status: args.status,
       error: args.status === "failed" ? args.error ?? "Run failed." : undefined,
       finishedAt: args.status === "completed" || args.status === "failed" ? Date.now() : undefined,
     });
+    if (args.status === "completed" || args.status === "failed") {
+      await clearActiveRunIfMatch(ctx, run.formId, run._id);
+    }
     return null;
   },
 });
@@ -489,6 +583,9 @@ export const finalizeRunBatch = mutation({
       error: status === "failed" ? run.error ?? undefined : undefined,
       finishedAt: status === "completed" || status === "failed" ? Date.now() : undefined,
     });
+    if (status === "completed" || status === "failed") {
+      await clearActiveRunIfMatch(ctx, run.formId, run._id);
+    }
 
     return { status, submitted, failed };
   },
@@ -540,6 +637,9 @@ export const recomputeRunStatus = mutation({
       error: status === "failed" ? run.error ?? undefined : undefined,
       finishedAt: status === "completed" || status === "failed" ? Date.now() : undefined,
     });
+    if (status === "completed" || status === "failed") {
+      await clearActiveRunIfMatch(ctx, run.formId, run._id);
+    }
 
     return { status, submitted, failed, prepared };
   },

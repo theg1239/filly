@@ -10,6 +10,7 @@ export default defineSchema({
     formKind: v.union(v.literal("d"), v.literal("e")),
     title: v.string(),
     rawSchema: v.optional(v.any()),
+    activeRunId: v.optional(v.id("runs")),
     createdAt: v.number(),
   })
     .index("by_external_id", ["externalId"])

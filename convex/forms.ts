@@ -77,11 +77,14 @@ export const getByExternalId = query({
       rawType: record.rawType ?? null,
     }));
 
-    const latestRun = await ctx.db
-      .query("runs")
-      .withIndex("by_form", (q) => q.eq("formId", form._id))
-      .order("desc")
-      .first();
+    const activeRun = form.activeRunId ? await ctx.db.get(form.activeRunId) : null;
+    const latestRun =
+      activeRun ??
+      (await ctx.db
+        .query("runs")
+        .withIndex("by_form", (q) => q.eq("formId", form._id))
+        .order("desc")
+        .first());
 
     const run = latestRun
       ? {

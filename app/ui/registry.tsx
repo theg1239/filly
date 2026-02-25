@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { defineRegistry, useBoundProp, useStateStore, type BaseComponentProps } from "@json-render/react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -154,7 +154,7 @@ const SliderField = ({
   const current = value ?? props.min ?? 1;
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         {props.label && <p className="text-sm font-medium">{props.label}</p>}
         <span className="text-sm text-muted-foreground">{current}</span>
       </div>
@@ -288,41 +288,43 @@ const FieldList = () => {
   return (
     <div className="grid gap-4">
       <Card className={`${neoCard} p-4`}>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Input
             value={query}
             placeholder="Search fields..."
             onChange={(event) => setQuery(event.target.value)}
-            className={`${neoInput} flex-1 min-w-[200px]`}
+            className={`${neoInput} w-full sm:flex-1`}
           />
-          <UIButton
-            variant="outline"
-            className="rounded-none border-2 border-foreground bg-background text-xs"
-            onClick={() => setShowEnabledOnly((prev) => !prev)}
-          >
-            {showEnabledOnly ? "Show All" : "Show Enabled"}
-          </UIButton>
-          <UIButton
-            variant="outline"
-            className="rounded-none border-2 border-foreground bg-background text-xs"
-            onClick={() => setAllEnabled(true)}
-          >
-            Enable All
-          </UIButton>
-          <UIButton
-            variant="outline"
-            className="rounded-none border-2 border-foreground bg-background text-xs"
-            onClick={() => setAllEnabled(false)}
-          >
-            Disable All
-          </UIButton>
-          <span className="text-xs text-muted-foreground">
-            {filteredFields.length}/{fields.length}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <UIButton
+              variant="outline"
+              className="rounded-none border-2 border-foreground bg-background text-xs"
+              onClick={() => setShowEnabledOnly((prev) => !prev)}
+            >
+              {showEnabledOnly ? "Show All" : "Show Enabled"}
+            </UIButton>
+            <UIButton
+              variant="outline"
+              className="rounded-none border-2 border-foreground bg-background text-xs"
+              onClick={() => setAllEnabled(true)}
+            >
+              Enable All
+            </UIButton>
+            <UIButton
+              variant="outline"
+              className="rounded-none border-2 border-foreground bg-background text-xs"
+              onClick={() => setAllEnabled(false)}
+            >
+              Disable All
+            </UIButton>
+            <span className="text-xs text-muted-foreground">
+              {filteredFields.length}/{fields.length}
+            </span>
+          </div>
         </div>
       </Card>
       {filteredFields.map(({ field, index }) => (
-        <Card key={field.id} className={`space-y-4 p-5 ${neoCard}`}>
+        <Card key={field.id} className={`space-y-4 p-4 sm:p-5 ${neoCard}`}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-none border-2 border-foreground bg-secondary text-primary">
@@ -349,11 +351,11 @@ const FieldList = () => {
             </div>
           </div>
 
-          <div className="rounded-none border-2 border-foreground bg-muted p-4">
+          <div className="rounded-none border-2 border-foreground bg-muted p-3 sm:p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Rule
             </p>
-            <div className="mt-3 grid gap-2 md:grid-cols-3">
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
               {[
                 { value: "random", label: "Randomize" },
                 { value: "fixed", label: "Fixed value" },
@@ -496,42 +498,132 @@ const PreviewList = () => {
           </UIButton>
         ) : null}
       </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
+      <div className="space-y-3 sm:hidden">
+        {samples.map((sample, index) => (
+          <div key={index} className="rounded-none border-2 border-foreground bg-muted/40 p-3">
             {visibleFields.map((field) => (
-              <TableHead key={field.id}>{field.label}</TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {samples.map((sample, index) => (
-            <TableRow key={index}>
-              {visibleFields.map((field) => (
-                <TableCell key={field.id}>
+              <div key={field.id} className="flex items-start justify-between gap-3 border-b border-foreground/20 py-2 text-xs last:border-b-0">
+                <span className="font-semibold text-foreground">{field.label}</span>
+                <span className="text-muted-foreground">
                   {formatValue(sample[`entry.${field.entryId}`])}
-                </TableCell>
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto sm:block">
+        <Table className="min-w-[520px]">
+          <TableHeader>
+            <TableRow>
+              {visibleFields.map((field) => (
+                <TableHead key={field.id}>{field.label}</TableHead>
               ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {samples.map((sample, index) => (
+              <TableRow key={index}>
+                {visibleFields.map((field) => (
+                  <TableCell key={field.id}>
+                    {formatValue(sample[`entry.${field.entryId}`])}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </Card>
   );
 };
 
+type RunSnapshot = {
+  runId: string;
+  status: string;
+  submitted: number;
+  failed: number;
+  prepared: number;
+  total: number;
+  error: string | null;
+};
+
+const terminalStatuses = new Set(["completed", "failed"]);
+const statusRank: Record<string, number> = {
+  idle: 0,
+  preparing: 1,
+  queued: 2,
+  running: 3,
+  completed: 4,
+  failed: 4,
+};
+
+const normalizeCount = (value: number) => (Number.isFinite(value) && value >= 0 ? value : 0);
+
+const reduceRunState = (state: RunSnapshot, next: RunSnapshot): RunSnapshot => {
+  const normalized: RunSnapshot = {
+    ...next,
+    submitted: normalizeCount(next.submitted),
+    failed: normalizeCount(next.failed),
+    prepared: normalizeCount(next.prepared),
+    total: Math.max(normalizeCount(next.total), 0),
+  };
+
+  if (!state.runId || normalized.runId !== state.runId) {
+    return normalized;
+  }
+
+  if (terminalStatuses.has(state.status) && !terminalStatuses.has(normalized.status)) {
+    return {
+      ...state,
+      submitted: Math.max(state.submitted, normalized.submitted),
+      failed: Math.max(state.failed, normalized.failed),
+      prepared: Math.max(state.prepared, normalized.prepared),
+      total: Math.max(state.total, normalized.total),
+      error: state.error ?? normalized.error,
+    };
+  }
+
+  const currentRank = statusRank[state.status] ?? 0;
+  const nextRank = statusRank[normalized.status] ?? 0;
+  const nextStatus = nextRank < currentRank ? state.status : normalized.status;
+
+  const total = Math.max(state.total, normalized.total);
+
+  return {
+    ...state,
+    ...normalized,
+    status: nextStatus,
+    submitted: Math.min(total, Math.max(state.submitted, normalized.submitted)),
+    failed: Math.min(total, Math.max(state.failed, normalized.failed)),
+    prepared: Math.min(total, Math.max(state.prepared, normalized.prepared)),
+    total,
+    error: normalized.error ?? state.error,
+  };
+};
+
 const RunStatus = () => {
   const { get } = useStateStore();
-  const status = (get("/run/status") as string) ?? "idle";
-  const runId = (get("/run/id") as Id<"runs">) ?? "";
-  const submitted = (get("/run/submitted") as number) ?? 0;
-  const failed = (get("/run/failed") as number) ?? 0;
-  const prepared = (get("/run/prepared") as number) ?? 0;
-  const runError = (get("/run/error") as string | null) ?? null;
-  const total = (get("/settings/submissions") as number) ?? 0;
+  const snapshot: RunSnapshot = {
+    status: (get("/run/status") as string) ?? "idle",
+    runId: (get("/run/id") as Id<"runs">) ?? "",
+    submitted: (get("/run/submitted") as number) ?? 0,
+    failed: (get("/run/failed") as number) ?? 0,
+    prepared: (get("/run/prepared") as number) ?? 0,
+    error: (get("/run/error") as string | null) ?? null,
+    total: (get("/settings/submissions") as number) ?? 0,
+  };
   const resumeRun = useMutation(api.runs.resumeRun);
   const lastChangeRef = useRef(Date.now());
   const lastResumeRef = useRef(0);
+  const [state, dispatch] = useReducer(reduceRunState, snapshot);
+  const status = state.status;
+  const runId = state.runId;
+  const submitted = state.submitted;
+  const failed = state.failed;
+  const prepared = state.prepared;
+  const runError = state.error;
+  const total = state.total;
   const progress = total
     ? Math.min(
         ((status === "preparing" ? prepared : submitted) / total) * 100,
@@ -541,6 +633,18 @@ const RunStatus = () => {
   const isPreparing = status === "preparing";
   const canResume = Boolean(runId) && status === "preparing";
   const canRetry = Boolean(runId) && status === "failed";
+
+  useEffect(() => {
+    dispatch(snapshot);
+  }, [
+    snapshot.runId,
+    snapshot.status,
+    snapshot.submitted,
+    snapshot.failed,
+    snapshot.prepared,
+    snapshot.total,
+    snapshot.error,
+  ]);
 
   useEffect(() => {
     lastChangeRef.current = Date.now();
@@ -553,7 +657,9 @@ const RunStatus = () => {
       const sinceResume = Date.now() - lastResumeRef.current;
       if (idleMs > 15000 && sinceResume > 15000) {
         lastResumeRef.current = Date.now();
-        void resumeRun({ runId });
+        if (runId) {
+          void resumeRun({ runId: runId as Id<"runs"> });
+        }
       }
     }, 4000);
     return () => clearInterval(interval);
@@ -563,7 +669,6 @@ const RunStatus = () => {
     <Card className={`${neoCard} space-y-4 p-6`}>
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Run status</p>
           <p className="text-lg font-semibold text-foreground">{status}</p>
         </div>
         <span className="rounded-none border-2 border-foreground bg-muted px-2 py-1 text-xs text-muted-foreground">
@@ -585,7 +690,11 @@ const RunStatus = () => {
           <UIButton
             variant="outline"
             className="rounded-none border-2 border-foreground bg-background text-xs"
-            onClick={() => resumeRun({ runId })}
+            onClick={() => {
+              if (runId) {
+                void resumeRun({ runId: runId as Id<"runs"> });
+              }
+            }}
           >
             Resume
           </UIButton>
@@ -595,7 +704,11 @@ const RunStatus = () => {
         <div className="flex justify-end">
           <UIButton
             className="rounded-none border-2 border-foreground bg-primary text-xs text-primary-foreground"
-            onClick={() => resumeRun({ runId })}
+            onClick={() => {
+              if (runId) {
+                void resumeRun({ runId: runId as Id<"runs"> });
+              }
+            }}
           >
             Retry
           </UIButton>

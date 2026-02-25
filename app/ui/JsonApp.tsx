@@ -61,6 +61,8 @@ const baseState = {
   },
 };
 
+const RUN_SETTINGS_STORAGE_KEY = "filly:run-settings-open";
+
 type JsonAppProps = {
   initialState?: Partial<typeof baseState>;
   mode?: "landing" | "configure";
@@ -104,7 +106,9 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
   const neoInput = "rounded-none border-2 border-foreground bg-background";
   const previewLimit = 3;
   const [showComplete, setShowComplete] = useState(false);
+  const [runSettingsOpen, setRunSettingsOpen] = useState(true);
   const lastStatusRef = useRef<string | null>(null);
+  const runSettingsBodyId = "run-settings-body";
   const clampNumber = (value: number, min: number, max: number) =>
     Number.isFinite(value) ? Math.min(Math.max(value, min), max) : min;
 
@@ -177,6 +181,18 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
       setShowComplete(true);
     }
   }, [runId, runStatusQuery, set]);
+
+  useEffect(() => {
+    if (mode !== "configure") return;
+    const stored = window.localStorage.getItem(RUN_SETTINGS_STORAGE_KEY);
+    if (stored === null) return;
+    setRunSettingsOpen(stored === "true");
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "configure") return;
+    window.localStorage.setItem(RUN_SETTINGS_STORAGE_KEY, String(runSettingsOpen));
+  }, [mode, runSettingsOpen]);
 
   useEffect(() => {
     set("/ui/loading/preview", previewStreaming);
@@ -290,37 +306,42 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
     set("/settings/submissions", runSettings.submissions);
     set("/settings/rateLimit", runSettings.rateLimit);
 
-    const result = await startRun({
-      formId: recordId as Id<"forms">,
-      fields: fields.map((field) => ({
-        id: field.id as Id<"formFields">,
-        prompt: field.prompt ?? undefined,
-        strategy: field.strategy ?? undefined,
-        fixedValue: field.fixedValue ?? undefined,
-        pattern: field.pattern ?? undefined,
-        enabled: field.enabled ?? undefined,
-        validation: field.validation ?? undefined,
-      })),
-      settings: runSettings,
-    });
-    if (!result.ok) {
-      set("/ui/error", "Failed to start run.");
-      set("/ui/loading/run", false);
-      return;
-    }
+    try {
+      const result = await startRun({
+        formId: recordId as Id<"forms">,
+        fields: fields.map((field) => ({
+          id: field.id as Id<"formFields">,
+          prompt: field.prompt ?? undefined,
+          strategy: field.strategy ?? undefined,
+          fixedValue: field.fixedValue ?? undefined,
+          pattern: field.pattern ?? undefined,
+          enabled: field.enabled ?? undefined,
+          validation: field.validation ?? undefined,
+        })),
+        settings: runSettings,
+      });
+      if (!result.ok) {
+        set("/ui/error", "Failed to start run.");
+        set("/ui/loading/run", false);
+        return;
+      }
 
-    set("/run/id", result.run.id);
-    set("/run/status", result.run.status);
-    set("/run/submitted", 0);
-    set("/run/failed", 0);
-    set("/run/prepared", result.run.prepared);
-    set("/run/error", null);
-    set("/ui/loading/run", false);
+      set("/run/id", result.run.id);
+      set("/run/status", result.run.status);
+      set("/run/submitted", result.run.submitted);
+      set("/run/failed", result.run.failed);
+      set("/run/prepared", result.run.prepared);
+      set("/run/error", null);
+      set("/ui/loading/run", false);
+    } catch (error) {
+      set("/ui/error", error instanceof Error ? error.message : "Failed to start run.");
+      set("/ui/loading/run", false);
+    }
   };
 
   return (
     <div className="relative min-h-screen bg-background text-foreground">
-      <main className="mx-auto w-full max-w-[1440px] px-6 py-10 lg:px-10">
+      <main className="mx-auto w-full max-w-[1440px] px-4 py-8 pb-24 sm:px-6 sm:py-10 sm:pb-10 lg:px-10">
         <div className="flex flex-col gap-8">
           {error ? (
             <Card className={`${neoCard} border-destructive bg-destructive/20 p-4 text-sm text-destructive`}>
@@ -371,7 +392,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
 
             {mode === "configure" ? (
               <>
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="space-y-1">
                     <h1 className="text-3xl font-black uppercase tracking-tight text-foreground">
                       {(get("/form/title") as string) || "Loaded form"}
@@ -401,7 +422,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                   </div>
                 </div>
 
-                <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px] items-start">
+                <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px] items-start">
                   <div className="space-y-5">
                     <div className="flex items-center justify-between border-b border-border pb-2">
                       <h3 className="text-lg font-semibold">Detected Fields</h3>
@@ -410,7 +431,7 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                     <Renderer spec={fieldSpec} registry={registry} />
                   </div>
 
-                  <div className="space-y-6 lg:sticky lg:top-28">
+                  <div className="order-first space-y-6 sm:order-none sm:sticky sm:top-28">
                     {runActive ? (
                       <Card className={`${neoCard} p-6`}>
                         <h3 className="text-lg font-semibold">Run Status</h3>
@@ -420,99 +441,112 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
                       </Card>
                     ) : null}
                     <Card className={`${neoCard} overflow-hidden`}>
-                      <div className="border-b-2 border-foreground bg-secondary px-5 py-4">
+                      <button
+                        type="button"
+                        onClick={() => setRunSettingsOpen((prev) => !prev)}
+                        aria-expanded={runSettingsOpen}
+                        aria-controls={runSettingsBodyId}
+                        title="Toggle run settings"
+                        className="w-full border-b-2 border-foreground bg-secondary px-5 py-4 text-left"
+                      >
                         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                           Run Settings
                         </div>
-                      </div>
-                      <div className="space-y-6 px-5 py-6">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-sm font-semibold text-muted-foreground">
-                            <span>Total Submissions</span>
-                            <span className="rounded-none border-2 border-foreground bg-muted px-2 py-0.5 text-[11px] uppercase tracking-[0.2em]">
-                              Max 500
-                            </span>
-                          </div>
-                          <div className="flex items-center overflow-hidden rounded-none border-2 border-foreground bg-muted">
-                            <Input
-                              type="number"
-                              value={submissions}
-                              min={1}
-                              max={500}
-                              onChange={(event) =>
-                                set("/settings/submissions", Number(event.target.value))
-                              }
-                              onBlur={(event) =>
-                                set(
-                                  "/settings/submissions",
-                                  clampNumber(Number(event.target.value), 1, 500),
-                                )
-                              }
-                              className="rounded-none border-none bg-transparent focus-visible:ring-0"
-                            />
-                            <div className="border-l-2 border-foreground bg-muted px-3 py-2 text-xs text-muted-foreground">
-                              units
+                      </button>
+                      <div id={runSettingsBodyId} hidden={!runSettingsOpen}>
+                        <div className="space-y-6 px-5 py-6">
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm font-semibold text-muted-foreground">
+                              <span>Total Submissions</span>
+                              <span className="rounded-none border-2 border-foreground bg-muted px-2 py-0.5 text-[11px] uppercase tracking-[0.2em]">
+                                Max 500
+                              </span>
+                            </div>
+                            <div className="flex items-center overflow-hidden rounded-none border-2 border-foreground bg-muted">
+                              <Input
+                                type="number"
+                                value={submissions}
+                                min={1}
+                                max={500}
+                                onChange={(event) =>
+                                  set("/settings/submissions", Number(event.target.value))
+                                }
+                                onBlur={(event) =>
+                                  set(
+                                    "/settings/submissions",
+                                    clampNumber(Number(event.target.value), 1, 500),
+                                  )
+                                }
+                                className="rounded-none border-none bg-transparent focus-visible:ring-0"
+                              />
+                              <div className="border-l-2 border-foreground bg-muted px-3 py-2 text-xs text-muted-foreground">
+                                units
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between text-sm text-muted-foreground">
-                          <span>Speed (Rate Limit)</span>
-                          <span className="font-semibold text-primary">
-                            ~{rateLimit} subs/sec
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between text-sm text-muted-foreground">
+                              <span>Speed (Rate Limit)</span>
+                              <span className="font-semibold text-primary">
+                                ~{rateLimit} subs/sec
+                              </span>
+                            </div>
+                            <Slider
+                              value={[rateLimit]}
+                              min={1}
+                              max={25}
+                              step={1}
+                              onValueChange={(vals) => set("/settings/rateLimit", vals[0] ?? 1)}
+                            />
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Slow</span>
+                              <span>Fast</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between border-y-2 border-foreground py-4">
+                            <div>
+                              <p className="text-sm font-semibold text-muted-foreground">
+                                Schedule run
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Start immediately or set time
+                              </p>
+                            </div>
+                            <Switch
+                              checked={Boolean(get("/settings/schedule"))}
+                              onCheckedChange={(value) => set("/settings/schedule", value)}
+                              className="rounded-none border-2 border-foreground"
+                            />
+                          </div>
+
+                          <div className="space-y-3">
+                            <Button
+                              variant="outline"
+                              className={`w-full ${neoButton} bg-background text-foreground`}
+                              onClick={handlePreview}
+                              disabled={previewLoading || !enabledCount}
+                            >
+                              {previewLoading ? "Generating..." : "Preview Samples"}
+                            </Button>
+                            <Button
+                              className={`w-full ${neoButton} bg-primary text-primary-foreground`}
+                              onClick={handleRun}
+                              disabled={!formLoaded || runLoading || runActive || !enabledCount}
+                            >
+                              {runLoading ? "Starting..." : "Start Generation"}
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="border-t-2 border-foreground bg-muted px-5 py-3 text-center text-xs text-muted-foreground">
+                          Estimated runtime:{" "}
+                          <span className="font-semibold text-foreground">
+                            {etaSeconds} seconds
                           </span>
                         </div>
-                        <Slider
-                          value={[rateLimit]}
-                          min={1}
-                          max={25}
-                          step={1}
-                          onValueChange={(vals) => set("/settings/rateLimit", vals[0] ?? 1)}
-                        />
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>Slow</span>
-                          <span>Fast</span>
-                        </div>
                       </div>
-
-                      <div className="flex items-center justify-between border-y-2 border-foreground py-4">
-                        <div>
-                          <p className="text-sm font-semibold text-muted-foreground">Schedule run</p>
-                          <p className="text-xs text-muted-foreground">
-                            Start immediately or set time
-                          </p>
-                        </div>
-                        <Switch
-                          checked={Boolean(get("/settings/schedule"))}
-                          onCheckedChange={(value) => set("/settings/schedule", value)}
-                          className="rounded-none border-2 border-foreground"
-                        />
-                      </div>
-
-                      <div className="space-y-3">
-                        <Button
-                          variant="outline"
-                          className={`w-full ${neoButton} bg-background text-foreground`}
-                          onClick={handlePreview}
-                          disabled={previewLoading || !enabledCount}
-                        >
-                          {previewLoading ? "Generating..." : "Preview Samples"}
-                        </Button>
-                        <Button
-                          className={`w-full ${neoButton} bg-primary text-primary-foreground`}
-                          onClick={handleRun}
-                          disabled={!formLoaded || runLoading || runActive || !enabledCount}
-                        >
-                          {runLoading ? "Starting..." : "Start Generation"}
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="border-t-2 border-foreground bg-muted px-5 py-3 text-center text-xs text-muted-foreground">
-                      Estimated runtime:{" "}
-                      <span className="font-semibold text-foreground">{etaSeconds} seconds</span>
-                    </div>
-                  </Card>
+                    </Card>
 
                   {runActive ? null : (
                     <>
@@ -545,6 +579,27 @@ const PageContent = ({ mode = "landing" }: Pick<JsonAppProps, "mode">) => {
           </div>
         </div>
       </main>
+      {mode === "configure" ? (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t-2 border-foreground bg-background/95 backdrop-blur sm:hidden">
+          <div className="mx-auto flex w-full max-w-[1440px] items-center gap-3 px-4 py-3">
+            <Button
+              variant="outline"
+              className={`flex-1 ${neoButton} bg-background text-foreground`}
+              onClick={handlePreview}
+              disabled={previewLoading || !enabledCount}
+            >
+              {previewLoading ? "Generating..." : "Preview"}
+            </Button>
+            <Button
+              className={`flex-1 ${neoButton} bg-primary text-primary-foreground`}
+              onClick={handleRun}
+              disabled={!formLoaded || runLoading || runActive || !enabledCount}
+            >
+              {runLoading ? "Starting..." : "Start"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {showComplete ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-6 py-10">
           <div

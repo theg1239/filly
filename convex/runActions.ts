@@ -88,6 +88,17 @@ export const prepareRun: ReturnType<typeof action> = action({
       return { ok: false, status: "failed", error: "Run not found." };
     }
 
+    const activeRun = await ctx.runQuery(api.runs.getFormActiveRun, { formId: run.formId });
+    if (activeRun?.activeRunId && activeRun.activeRunId !== run.id) {
+      const message = "Run superseded by another active run.";
+      await ctx.runMutation(api.runs.setRunStatusOnly, {
+        runId: args.runId,
+        status: "failed",
+        error: message,
+      });
+      return { ok: false, status: "failed", error: message };
+    }
+
     if (run.status === "completed" || run.status === "failed") {
       return { ok: true, status: run.status };
     }
@@ -203,6 +214,17 @@ export const processRun: ReturnType<typeof action> = action({
     const run = await ctx.runQuery(api.runs.getRun, { runId: args.runId });
     if (!run) {
       return { ok: false, status: "failed", error: "Run not found." };
+    }
+
+    const activeRun = await ctx.runQuery(api.runs.getFormActiveRun, { formId: run.formId });
+    if (activeRun?.activeRunId && activeRun.activeRunId !== run.id) {
+      const message = "Run superseded by another active run.";
+      await ctx.runMutation(api.runs.setRunStatusOnly, {
+        runId: args.runId,
+        status: "failed",
+        error: message,
+      });
+      return { ok: false, status: "failed", error: message };
     }
 
     if (run.status === "preparing") {
